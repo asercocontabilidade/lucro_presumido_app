@@ -1,0 +1,253 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Usuario {
+  id            Int      @id @default(autoincrement())
+  nome          String
+  email         String   @unique
+  senhaHash     String
+  perfil        String   @default("USUARIO")
+  ativo         Boolean  @default(true)
+  criadoEm      DateTime @default(now())
+  atualizadoEm  DateTime @updatedAt
+
+  calculos      CalculoTrimestral[] @relation("CriadoPor")
+  atualizacoes  CalculoTrimestral[] @relation("AtualizadoPor")
+  logs          LogAuditoria[]
+  feedbacks     Feedback[]
+
+  @@map("usuarios")
+}
+
+model Feedback {
+  id           Int      @id @default(autoincrement())
+  tipo         String   @default("melhoria")
+  titulo       String
+  descricao    String   @db.Text
+  status       String   @default("aberto")
+  usuarioId    Int
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  usuario      Usuario  @relation(fields: [usuarioId], references: [id])
+
+  @@map("feedbacks")
+}
+
+model CalculoTrimestral {
+  id                   Int      @id @default(autoincrement())
+  ano                  Int
+  trimestre            Int
+  descricao            String?
+  empresaId            String?
+
+  receita16            Float    @default(0)
+  receita8             Float    @default(0)
+  receita16p           Float    @default(0)
+  receita32            Float    @default(0)
+  outrasReceitas       Float    @default(0)
+
+  receitaTotal         Float    @default(0)
+  excedenteMajorado    Float    @default(0)
+  basePresumidaIrpj    Float    @default(0)
+  irpj15               Float    @default(0)
+  adicionalIr10        Float    @default(0)
+  irpjTotal            Float    @default(0)
+  irrf                 Float    @default(0)
+  irpjARecolher        Float    @default(0)
+
+  basePresumidaCsll    Float    @default(0)
+  csll9                Float    @default(0)
+  csllRetida           Float    @default(0)
+  csllARecolher        Float    @default(0)
+
+  detalheCalculo       String?  @db.Text
+
+  usuarioCriacaoId     Int
+  usuarioAtualizacaoId Int?
+  criadoEm             DateTime @default(now())
+  atualizadoEm         DateTime @updatedAt
+
+  usuarioCriacao       Usuario  @relation("CriadoPor", fields: [usuarioCriacaoId], references: [id])
+  usuarioAtualizacao   Usuario? @relation("AtualizadoPor", fields: [usuarioAtualizacaoId], references: [id])
+  empresa              Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@unique([ano, trimestre, empresaId])
+  @@map("calculos_trimestrais")
+}
+
+model LogAuditoria {
+  id         Int      @id @default(autoincrement())
+  acao       String
+  entidade   String
+  entidadeId Int
+  detalhes   String?  @db.Text
+  usuarioId  Int
+  criadoEm   DateTime @default(now())
+
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id])
+
+  @@map("logs_auditoria")
+}
+
+// ─── Empresas ────────────────────────────────────────────────────────────────
+
+model Empresa {
+  id                     String   @id @default(cuid())
+  codigoInterno          String?
+  codigoErp              String?
+  cnpj                   String?  @unique
+  razaoSocial            String
+  nomeFantasia           String?
+  regimeTributario       String   @default("lucro_presumido")
+  cnaePrimario           String?
+  atividadePrincipal     String?
+  percPresuncaoIrpj      Float?
+  percPresuncaoCsll      Float?
+  sujeitoMajoracao       Boolean  @default(false)
+  modalidadeRecolhimento String   @default("trimestral")
+  dtInicioServicos       String?
+  inscricaoEstadual      String?
+  logoPath               String?
+  ativo                  Boolean  @default(true)
+  criadoEm               DateTime @default(now())
+  atualizadoEm           DateTime @updatedAt
+
+  periodosApuracao       PeriodoApuracao[]
+  calculosIrpjCsll       CalculoIrpjCsll[]
+  calculosPisCofins      CalculoPisCofins[]
+  historicoExportacoes   HistoricoExportacao[]
+  calculosTrimestrais    CalculoTrimestral[]
+
+  @@map("empresas")
+}
+
+// ─── Percentuais de Presunção por Atividade ──────────────────────────────────
+
+model PercentualPresuncao {
+  id                 String  @id @default(cuid())
+  codigoAtividade    String  @unique
+  descricaoAtividade String
+  percIrpj           Float
+  percCsll           Float
+  baseLegal          String?
+  ativo              Boolean @default(true)
+
+  @@map("percentuais_presuncao")
+}
+
+// ─── Períodos de Apuração ─────────────────────────────────────────────────────
+
+model PeriodoApuracao {
+  id           String   @id @default(cuid())
+  empresaId    String
+  ano          Int
+  trimestre    Int?
+  mes          Int?
+  tipoPeriodo  String   @default("trimestral")
+  status       String   @default("aberto")
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  empresa          Empresa          @relation(fields: [empresaId], references: [id])
+  calculosIrpjCsll CalculoIrpjCsll[]
+
+  @@map("periodos_apuracao")
+}
+
+// ─── Cálculos IRPJ / CSLL ────────────────────────────────────────────────────
+
+model CalculoIrpjCsll {
+  id                String   @id @default(cuid())
+  empresaId         String?
+  periodoId         String?
+  ano               Int
+  trimestre         Int
+  regime            String   @default("lucro_presumido")
+  receitaBrutaTotal Float    @default(0)
+  percPresuncaoIrpj Float    @default(0)
+  baseCalculoIrpj   Float    @default(0)
+  irpjAliquota15    Float    @default(0)
+  irpjAdicional10   Float    @default(0)
+  irpjTotal         Float    @default(0)
+  percPresuncaoCsll Float    @default(0)
+  baseCalculoCsll   Float    @default(0)
+  csllTotal         Float    @default(0)
+  temMajoracao      Boolean  @default(false)
+  irpjMajorado      Float?
+  csllMajorada      Float?
+  usuarioCalculo    String?
+  dataCalculo       DateTime @default(now())
+  observacoes       String?  @db.Text
+  hashCalculo       String?
+
+  empresa Empresa?         @relation(fields: [empresaId], references: [id])
+  periodo PeriodoApuracao? @relation(fields: [periodoId], references: [id])
+
+  @@map("calculos_irpj_csll")
+}
+
+// ─── Cálculos PIS / COFINS ───────────────────────────────────────────────────
+
+model CalculoPisCofins {
+  id              String   @id @default(cuid())
+  empresaId       String?
+  ano             Int
+  mes             Int
+  regimePisCofins String   @default("cumulativo")
+  receitaBruta    Float    @default(0)
+  exclusoesBase   Float    @default(0)
+  baseCalculo     Float    @default(0)
+  aliquotaPis     Float    @default(0.0065)
+  pisBruto        Float    @default(0)
+  creditosPis     Float    @default(0)
+  pisARecolher    Float    @default(0)
+  aliquotaCofins  Float    @default(0.03)
+  cofinsBruta     Float    @default(0)
+  creditosCofins  Float    @default(0)
+  cofinsARecolher Float    @default(0)
+  dataCalculo     DateTime @default(now())
+  usuarioCalculo  String?
+  conferido       Boolean  @default(false)
+
+  empresa Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@map("calculos_pis_cofins")
+}
+
+// ─── Parâmetros do Sistema ───────────────────────────────────────────────────
+
+model ParametroSistema {
+  id             String    @id @default(cuid())
+  chave          String    @unique
+  valor          String
+  descricao      String?
+  vigenciaInicio String?
+  vigenciaFim    String?
+  atualizadoEm   DateTime  @updatedAt
+
+  @@map("parametros_sistema")
+}
+
+// ─── Histórico de Exportações ────────────────────────────────────────────────
+
+model HistoricoExportacao {
+  id               String   @id @default(cuid())
+  empresaId        String?
+  tipoRelatorio    String?
+  filtrosAplicados String?  @db.Text
+  exportadoEm      DateTime @default(now())
+  usuario          String?
+  arquivoNome      String?
+
+  empresa Empresa? @relation(fields: [empresaId], references: [id])
+
+  @@map("historico_exportacoes")
+}
