@@ -6,6 +6,11 @@ import { ResultadoCalculo } from '../utils/calculo';
 import { brl, TRIMESTRES } from '../utils/format';
 import TabelaCalculo from '../components/TabelaCalculo';
 
+interface LogEntry {
+  criadoEm: string;
+  usuario: { nome: string };
+}
+
 interface Calculo {
   id: number; ano: number; trimestre: number; descricao?: string;
   receitaTotal: string; excedenteMajorado: string;
@@ -16,6 +21,7 @@ interface Calculo {
   usuarioCriacao: { nome: string };
   usuarioAtualizacao?: { nome: string };
   detalheCalculo: ResultadoCalculo;
+  logAlteracoes?: LogEntry[];
 }
 
 export default function DetalhePage() {
@@ -153,6 +159,26 @@ export default function DetalhePage() {
       </div>
 
       <TabelaCalculo resultado={resultado} />
+
+      {/* ── Log de Alterações ────────────────────────────────────────── */}
+      <div className="mt-8 no-print">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3">Log de Alterações</h3>
+        {(!calculo.logAlteracoes || calculo.logAlteracoes.length === 0) ? (
+          <p className="text-xs text-gray-400 italic">Nenhuma alteração registrada.</p>
+        ) : (
+          <div className="border border-gray-100 rounded-lg divide-y divide-gray-100">
+            {calculo.logAlteracoes.map((log, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-2 text-xs text-gray-500">
+                <span className="text-gray-400 tabular-nums whitespace-nowrap">
+                  {new Date(log.criadoEm).toLocaleString('pt-BR')}
+                </span>
+                <span className="text-gray-300">—</span>
+                <span>Editado por <span className="font-medium text-gray-700">{log.usuario.nome}</span></span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

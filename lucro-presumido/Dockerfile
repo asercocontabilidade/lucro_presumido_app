@@ -23,5 +23,6 @@ RUN apk add --no-cache openssl ca-certificates libc6-compat
 COPY --from=backend-build /backend/node_modules ./node_modules
 COPY --from=backend-build /backend/dist       ./dist
 COPY --from=frontend-build /frontend/dist     ./public
+COPY LOGO.png ./
 EXPOSE 3003
 CMD ["node", "dist/index.js"]

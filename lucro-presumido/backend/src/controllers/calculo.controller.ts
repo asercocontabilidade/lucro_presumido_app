@@ -75,15 +75,23 @@ export async function listar(req: Request, res: Response) {
 }
 
 export async function buscarPorId(req: Request, res: Response) {
-  const calculo = await prisma.calculoTrimestral.findUnique({
-    where: { id: Number(req.params.id) },
-    include: {
-      usuarioCriacao: { select: { nome: true } },
-      usuarioAtualizacao: { select: { nome: true } },
-    },
-  });
+  const id = Number(req.params.id);
+  const [calculo, logAlteracoes] = await Promise.all([
+    prisma.calculoTrimestral.findUnique({
+      where: { id },
+      include: {
+        usuarioCriacao: { select: { nome: true } },
+        usuarioAtualizacao: { select: { nome: true } },
+      },
+    }),
+    prisma.logAuditoria.findMany({
+      where: { entidade: 'CalculoTrimestral', entidadeId: id, acao: 'EDITAR' },
+      orderBy: { criadoEm: 'asc' },
+      select: { criadoEm: true, usuario: { select: { nome: true } } },
+    }),
+  ]);
   if (!calculo) return res.status(404).json({ erro: 'Cálculo não encontrado.' });
-  return res.json(parseCalculo(calculo as unknown as Record<string, unknown>));
+  return res.json({ ...parseCalculo(calculo as unknown as Record<string, unknown>), logAlteracoes });
 }
 
 export async function criar(req: Request, res: Response, next: NextFunction) {
