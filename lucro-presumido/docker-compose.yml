@@ -1,34 +1,15 @@
-version: '3.8'
-
 services:
-  postgres:
-    image: postgres:15-alpine
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: victorG-lucro-presumido-app
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+      - "3006:3003"
     environment:
-      POSTGRES_USER: lucro
-      POSTGRES_PASSWORD: lucro123
-      POSTGRES_DB: lucro_presumido
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  backend:
-    build: ./backend
-    ports:
-      - "3001:3001"
-    environment:
-      DATABASE_URL: postgresql://lucro:lucro123@postgres:5432/lucro_presumido
-      JWT_SECRET: troque_este_segredo_em_producao
-      PORT: 3001
-    depends_on:
-      - postgres
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-
-volumes:
-  pgdata:
+      - NODE_ENV=production
+      - PORT=3003
+    env_file:
+      - backend/.env
