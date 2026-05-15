@@ -45,6 +45,7 @@ model CalculoTrimestral {
   id                   Int      @id @default(autoincrement())
   ano                  Int
   trimestre            Int
+  mesReferencia        Int      @default(3)
   descricao            String?
   empresaId            String?
 
@@ -79,7 +80,7 @@ model CalculoTrimestral {
   usuarioAtualizacao   Usuario? @relation("AtualizadoPor", fields: [usuarioAtualizacaoId], references: [id])
   empresa              Empresa? @relation(fields: [empresaId], references: [id])
 
-  @@unique([ano, trimestre, empresaId])
+  @@unique([ano, trimestre, mesReferencia, empresaId])
   @@map("calculos_trimestrais")
 }
 

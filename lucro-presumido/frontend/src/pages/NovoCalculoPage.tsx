@@ -36,6 +36,7 @@ interface ApuracaoAnterior {
   csllARecolher: number;
   calculoId: number;
   descricao: string;
+  receitasMes?: MesEntrada;  // receitas do mês para restaurar na aba correspondente
 }
 
 // ── Autosave helpers ─────────────────────────────────────────────────────────
@@ -142,16 +143,21 @@ export default function NovoCalculoPage() {
           csllRetida:     Number(c.csllRetida),
         });
 
-        // ── Restaurar modo mensal e antecipações a partir do detalheCalculo ──
+        // ── Restaurar modo mensal, mesReferencia e antecipações a partir do detalheCalculo ──
         const detalhe = c.detalheCalculo ?? {};
         const modalidade = detalhe.modalidadeRecolhimento ?? 'trimestral';
+        const mesRef = detalhe.mesReferencia as number | undefined;
         if (modalidade === 'mensal') {
           setModoMensal(true);
+          // Restaurar aba ativa com base no tipo de registro
+          if (mesRef === 1) setMesAtivo(0);
+          else if (mesRef === 2) setMesAtivo(1);
+          // mesRef=3 ou undefined → mantém aba 0 (fechamento trimestral, usuário navega)
           // Restaurar receitas individuais por mês, se disponíveis
           if (detalhe.receitasMensais) {
             setMeses(detalhe.receitasMensais as [MesEntrada, MesEntrada, MesEntrada]);
           }
-          // Restaurar antecipações detalhadas por mês, se disponíveis
+          // Restaurar antecipações detalhadas por mês (apenas em registros de fechamento)
           if (detalhe.irpjAntecipacaoMes1 !== undefined) {
             setIrpjAntMes1(Number(detalhe.irpjAntecipacaoMes1));
             setIrpjAntMes2(Number(detalhe.irpjAntecipacaoMes2 ?? 0));
@@ -159,7 +165,6 @@ export default function NovoCalculoPage() {
             setCsllAntMes2(Number(detalhe.csllAntecipacaoMes2 ?? 0));
           } else {
             // Fallback: cálculo antigo — usa valores consolidados
-            // irpjMesesAnteriores e csllMesesAnteriores ficam nos campos genéricos
             setIrpjMesesAnt(Number(detalhe.irpjMesesAnteriores ?? 0));
             setCsllMesesAnt(Number(detalhe.csllMesesAnteriores ?? 0));
             setEdicaoMensalSemDetalhe(true);
@@ -208,7 +213,7 @@ export default function NovoCalculoPage() {
           detalheCalculo?: string | Record<string, unknown>;
         }> = data.calculos ?? [];
 
-        // Filtra cálculos mensais (meses 1 e 2) — identifica pelo detalheCalculo
+        // Filtra registros de antecipação mensal (mesReferencia 1 ou 2)
         const encontradas: ApuracaoAnterior[] = [];
         for (const c of calculos) {
           const detalhe = typeof c.detalheCalculo === 'string'
@@ -217,15 +222,18 @@ export default function NovoCalculoPage() {
           const modalidade = detalhe?.modalidadeRecolhimento ?? 'trimestral';
           const mesRef = detalhe?.mesReferencia as number | undefined;
 
-          // Cálculo mensal com mesReferencia 1 ou 2 (meses anteriores do trimestre)
-          if (modalidade === 'mensal' && mesRef !== undefined && mesRef < 2) {
+          // Antecipação mês 1 (mesReferencia=1) ou mês 2 (mesReferencia=2)
+          if (modalidade === 'mensal' && (mesRef === 1 || mesRef === 2)) {
+            const mesIdx = mesRef - 1; // 1→0, 2→1
+            const receitasMensais = detalhe?.receitasMensais as [MesEntrada, MesEntrada, MesEntrada] | undefined;
             encontradas.push({
-              mes: mesesTri[mesRef],
-              mesIdx: mesRef,
+              mes: mesesTri[mesIdx],
+              mesIdx,
               irpjARecolher: Number(c.irpjARecolher),
               csllARecolher: Number(c.csllARecolher),
               calculoId: c.id,
-              descricao: c.descricao ?? `Mês ${mesRef + 1}`,
+              descricao: c.descricao ?? `Mês ${mesRef}`,
+              receitasMes: receitasMensais?.[mesIdx],
             });
           }
         }
@@ -240,13 +248,14 @@ export default function NovoCalculoPage() {
     return () => clearTimeout(timer);
   }, [modoMensal, empresaId, ano, trimestre, isEdicao]);
 
-  // Verificar proativamente se o período já possui cálculo para a mesma empresa
+  // Verificar proativamente se já existe registro com o mesmo mesReferencia para a empresa/período
   useEffect(() => {
     setPeriodoConflito(null);
     if (isEdicao || !empresaId) return;
+    const mesReferenciaCheck = modoMensal && mesAtivo < 2 ? mesAtivo + 1 : 3;
     const timer = setTimeout(async () => {
       try {
-        const { data } = await api.get('/calculos', { params: { ano, trimestre, empresaId, limit: 1 } });
+        const { data } = await api.get('/calculos', { params: { ano, trimestre, empresaId, mesReferencia: mesReferenciaCheck, limit: 1 } });
         if (data.total > 0) {
           const c = data.calculos[0];
           setPeriodoConflito({ id: c.id, descricao: c.descricao || `${ano} - T${trimestre}` });
@@ -254,7 +263,7 @@ export default function NovoCalculoPage() {
       } catch { /* ignora erros de rede silenciosamente */ }
     }, 400);
     return () => clearTimeout(timer);
-  }, [ano, trimestre, empresaId, isEdicao]);
+  }, [ano, trimestre, empresaId, isEdicao, modoMensal, mesAtivo]);
 
   // ── Autosave ─────────────────────────────────────────────────────────────
   // Verifica rascunho ao montar (só para novo cálculo ou edição sem dados carregados ainda)
@@ -404,38 +413,75 @@ export default function NovoCalculoPage() {
     setModoMensal(v => !v);
   }
 
-  /** Aplica as apurações anteriores encontradas como antecipações */
+  /** Aplica as apurações anteriores encontradas como antecipações e restaura receitas nas abas */
   function aplicarRecuperacao() {
-    for (const ap of apuracoesAnteriores) {
-      if (ap.mesIdx === 0) {
-        setIrpjAntMes1(ap.irpjARecolher);
-        setCsllAntMes1(ap.csllARecolher);
-      } else if (ap.mesIdx === 1) {
-        setIrpjAntMes2(ap.irpjARecolher);
-        setCsllAntMes2(ap.csllARecolher);
+    let maxMesIdx = -1;
+    setMeses(prev => {
+      const next = [...prev] as typeof prev;
+      for (const ap of apuracoesAnteriores) {
+        if (ap.mesIdx === 0) {
+          setIrpjAntMes1(ap.irpjARecolher);
+          setCsllAntMes1(ap.csllARecolher);
+          if (ap.receitasMes) next[0] = ap.receitasMes;
+        } else if (ap.mesIdx === 1) {
+          setIrpjAntMes2(ap.irpjARecolher);
+          setCsllAntMes2(ap.csllARecolher);
+          if (ap.receitasMes) next[1] = ap.receitasMes;
+        }
+        if (ap.mesIdx > maxMesIdx) maxMesIdx = ap.mesIdx;
       }
-    }
+      return next;
+    });
+    // Navega automaticamente para o próximo mês a preencher
+    setMesAtivo(Math.min(maxMesIdx + 1, 2));
     setModalRecuperacao(false);
-    toast.success('Antecipações preenchidas automaticamente a partir das apurações anteriores.');
+    toast.success('Antecipações e receitas anteriores importadas com sucesso.');
   }
 
   async function handleSalvar() {
     setSalvando(true);
     try {
-      const payload = {
-        ano, trimestre, descricao,
-        empresaId: empresaId || undefined,
-        // Envia modalidadeRecolhimento para ser salva no detalheCalculo
-        modalidadeRecolhimento: empresaSel?.modalidadeRecolhimento ?? (modoMensal ? 'mensal' : 'trimestral'),
-        // Antecipações detalhadas por mês (modo mensal ativo)
-        irpjAntecipacaoMes1: modoMensal ? irpjAntMes1 : undefined,
-        irpjAntecipacaoMes2: modoMensal ? irpjAntMes2 : undefined,
-        csllAntecipacaoMes1: modoMensal ? csllAntMes1 : undefined,
-        csllAntecipacaoMes2: modoMensal ? csllAntMes2 : undefined,
-        // Receitas individuais por mês (para restaurar ao editar)
-        receitasMensais: modoMensal ? meses : undefined,
-        ...entradaEfetiva,
-      };
+      // mesReferencia: 1=antecipação mês 1, 2=antecipação mês 2, 3=fechamento trimestral
+      const mesReferencia = modoMensal && mesAtivo < 2 ? mesAtivo + 1 : 3;
+      const isAntecipacao = mesReferencia === 1 || mesReferencia === 2;
+
+      let payload: Record<string, unknown>;
+
+      if (isAntecipacao) {
+        // Antecipação mensal: envia apenas as receitas do mês ativo
+        const entMes = meses[mesAtivo];
+        payload = {
+          ano, trimestre, descricao,
+          empresaId: empresaId || undefined,
+          mesReferencia,
+          modalidadeRecolhimento: 'mensal',
+          receita16:      entMes.receita16,
+          receita8:       entMes.receita8,
+          receita16p:     entMes.receita16p,
+          receita32:      entMes.receita32,
+          outrasReceitas: entMes.outrasReceitas,
+          irrf:           entMes.irrf      ?? 0,
+          csllRetida:     entMes.csllRetida ?? 0,
+          irpjMesesAnteriores: 0,
+          csllMesesAnteriores: 0,
+          receitasMensais: meses, // armazena tudo para referência
+        };
+      } else {
+        // Fechamento trimestral: soma os 3 meses e aplica antecipações
+        payload = {
+          ano, trimestre, descricao,
+          empresaId: empresaId || undefined,
+          mesReferencia: 3,
+          modalidadeRecolhimento: empresaSel?.modalidadeRecolhimento ?? (modoMensal ? 'mensal' : 'trimestral'),
+          irpjAntecipacaoMes1: modoMensal ? irpjAntMes1 : undefined,
+          irpjAntecipacaoMes2: modoMensal ? irpjAntMes2 : undefined,
+          csllAntecipacaoMes1: modoMensal ? csllAntMes1 : undefined,
+          csllAntecipacaoMes2: modoMensal ? csllAntMes2 : undefined,
+          receitasMensais: modoMensal ? meses : undefined,
+          ...entradaEfetiva,
+        };
+      }
+
       if (isEdicao) {
         await api.put(`/calculos/${id}`, payload);
         limparRascunho(RASCUNHO_KEY);
@@ -444,7 +490,9 @@ export default function NovoCalculoPage() {
       } else {
         const { data } = await api.post('/calculos', payload);
         limparRascunho(RASCUNHO_KEY);
-        toast.success('Cálculo salvo.');
+        toast.success(isAntecipacao
+          ? `Antecipação de ${MESES_TRI[trimestre as keyof typeof MESES_TRI]?.[mesAtivo]} salva com sucesso.`
+          : 'Fechamento trimestral salvo.');
         navigate(`/calculos/${data.id}`);
       }
     } catch (err: unknown) {
@@ -838,8 +886,8 @@ export default function NovoCalculoPage() {
                 </>
               )}
 
-              {/* Pagamentos mensais anteriores — só no modo mensal */}
-              {modoMensal && (
+              {/* Pagamentos mensais anteriores — só no fechamento trimestral (aba 3) */}
+              {modoMensal && mesAtivo === 2 && (
                 <>
                   <div className="divider" />
                   <div className="flex items-center gap-1.5 mb-1">
@@ -958,7 +1006,16 @@ export default function NovoCalculoPage() {
             disabled={salvando}
             className="btn-primary btn-lg w-full"
           >
-            {salvando ? 'Salvando...' : isEdicao ? 'Salvar Alterações' : 'Salvar Cálculo'}
+            {salvando ? 'Salvando...' : (() => {
+              if (modoMensal && mesAtivo < 2) {
+                const nomeMes = MESES_TRI[trimestre as keyof typeof MESES_TRI]?.[mesAtivo] ?? `Mês ${mesAtivo + 1}`;
+                return isEdicao ? `Atualizar Antecipação — ${nomeMes}` : `Salvar Antecipação — ${nomeMes}`;
+              }
+              if (modoMensal && mesAtivo === 2) {
+                return isEdicao ? 'Atualizar Fechamento do Trimestre' : 'Salvar Fechamento do Trimestre';
+              }
+              return isEdicao ? 'Salvar Alterações' : 'Salvar Cálculo';
+            })()}
           </button>
 
           {/* Indicador de autosave */}

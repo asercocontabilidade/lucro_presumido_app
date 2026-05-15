@@ -39,11 +39,13 @@ const calculo = __importStar(require("../controllers/calculo.controller"));
 const usuario = __importStar(require("../controllers/usuario.controller"));
 const empresa = __importStar(require("../controllers/empresa.controller"));
 const pisCofins = __importStar(require("../controllers/pisCofins.controller"));
+const feedback = __importStar(require("../controllers/feedback.controller"));
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const relatorioAnual_service_1 = require("../services/relatorioAnual.service");
 const router = (0, express_1.Router)();
 // ─── Auth ────────────────────────────────────────────────────────────────────
 router.post('/auth/login', auth_controller_1.login);
+router.post('/auth/registrar', auth_controller_1.registrar);
 router.get('/auth/perfil', auth_middleware_1.autenticar, auth_controller_1.perfil);
 router.put('/auth/senha', auth_middleware_1.autenticar, auth_controller_1.alterarSenha);
 // ─── Relatório Anual ──────────────────────────────────────────────────────────
@@ -87,6 +89,11 @@ router.get('/pis-cofins/vencimento', auth_middleware_1.autenticar, pisCofins.cal
 router.get('/pis-cofins/:id', auth_middleware_1.autenticar, pisCofins.buscarPorId);
 router.post('/pis-cofins/preview', auth_middleware_1.autenticar, pisCofins.calcularPreview);
 router.post('/pis-cofins', auth_middleware_1.autenticar, pisCofins.salvar);
+// ─── Feedback / Sugestões ─────────────────────────────────────────────────────
+router.get('/feedbacks', auth_middleware_1.autenticar, feedback.listar);
+router.post('/feedbacks', auth_middleware_1.autenticar, feedback.criar);
+router.put('/feedbacks/:id', auth_middleware_1.autenticar, feedback.atualizar);
+router.delete('/feedbacks/:id', auth_middleware_1.autenticar, feedback.excluir);
 // ─── Usuários (admin) ─────────────────────────────────────────────────────────
 router.get('/usuarios', auth_middleware_1.autenticar, auth_middleware_1.apenasAdmin, usuario.listar);
 router.post('/usuarios', auth_middleware_1.autenticar, auth_middleware_1.apenasAdmin, usuario.criar);

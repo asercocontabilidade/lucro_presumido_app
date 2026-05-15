@@ -57,14 +57,20 @@ async function registrarLog(usuarioId, acao, entidadeId, detalhes) {
     });
 }
 async function listar(req, res) {
-    const { ano, trimestre, empresaId, page = '1', limit = '20' } = req.query;
+    const { ano, trimestre, mesReferencia, empresaId, empresa, comMajoracao, page = '1', limit = '20' } = req.query;
     const where = {};
     if (ano)
         where.ano = Number(ano);
     if (trimestre)
         where.trimestre = Number(trimestre);
+    if (mesReferencia !== undefined)
+        where.mesReferencia = Number(mesReferencia);
     if (empresaId)
         where.empresaId = String(empresaId);
+    if (comMajoracao === 'true')
+        where.excedenteMajorado = { gt: 0 };
+    if (empresa)
+        where.empresa = { razaoSocial: { contains: String(empresa) } };
     const skip = (Number(page) - 1) * Number(limit);
     const [total, calculos] = await Promise.all([
         prisma.calculoTrimestral.count({ where }),
@@ -74,32 +80,44 @@ async function listar(req, res) {
             include: {
                 usuarioCriacao: { select: { nome: true } },
                 usuarioAtualizacao: { select: { nome: true } },
+                empresa: { select: { razaoSocial: true, cnpj: true } },
             },
         }),
     ]);
     return res.json({ total, pagina: Number(page), calculos });
 }
 async function buscarPorId(req, res) {
-    const calculo = await prisma.calculoTrimestral.findUnique({
-        where: { id: Number(req.params.id) },
-        include: {
-            usuarioCriacao: { select: { nome: true } },
-            usuarioAtualizacao: { select: { nome: true } },
-        },
-    });
+    const id = Number(req.params.id);
+    const [calculo, logAlteracoes] = await Promise.all([
+        prisma.calculoTrimestral.findUnique({
+            where: { id },
+            include: {
+                usuarioCriacao: { select: { nome: true } },
+                usuarioAtualizacao: { select: { nome: true } },
+            },
+        }),
+        prisma.logAuditoria.findMany({
+            where: { entidade: 'CalculoTrimestral', entidadeId: id, acao: 'EDITAR' },
+            orderBy: { criadoEm: 'asc' },
+            select: { criadoEm: true, usuario: { select: { nome: true } } },
+        }),
+    ]);
     if (!calculo)
         return res.status(404).json({ erro: 'Cálculo não encontrado.' });
-    return res.json(parseCalculo(calculo));
+    return res.json({ ...parseCalculo(calculo), logAlteracoes });
 }
 async function criar(req, res, next) {
     try {
-        const { ano, trimestre, descricao, empresaId, irrf, csllRetida, irpjMesesAnteriores, csllMesesAnteriores, modalidadeRecolhimento, irpjAntecipacaoMes1, irpjAntecipacaoMes2, csllAntecipacaoMes1, csllAntecipacaoMes2, receitasMensais, ...body } = req.body;
+        const { ano, trimestre, mesReferencia: mesRefBody, descricao, empresaId, irrf, csllRetida, irpjMesesAnteriores, csllMesesAnteriores, modalidadeRecolhimento, irpjAntecipacaoMes1, irpjAntecipacaoMes2, csllAntecipacaoMes1, csllAntecipacaoMes2, receitasMensais, ...body } = req.body;
+        const mesReferencia = mesRefBody !== undefined ? Number(mesRefBody) : 3;
+        const isAntecipacao = mesReferencia === 1 || mesReferencia === 2;
         const entrada = parseEntrada({ ...body, irrf, csllRetida, irpjMesesAnteriores, csllMesesAnteriores });
-        const resultado = (0, calculo_service_1.calcularLucroPresumido)(entrada, opcoesPeriodo(ano, trimestre));
-        // Inclui modalidadeRecolhimento, antecipações e receitas mensais no detalheCalculo para rastreabilidade
+        const resultado = (0, calculo_service_1.calcularLucroPresumido)(entrada, opcoesPeriodo(ano, trimestre, isAntecipacao ? 'mensal_antecipacao' : undefined));
+        // Inclui modalidadeRecolhimento, mesReferencia, antecipações e receitas mensais no detalheCalculo
         const detalheComModalidade = {
             ...resultado,
             modalidadeRecolhimento: modalidadeRecolhimento ?? 'trimestral',
+            mesReferencia,
             ...(irpjAntecipacaoMes1 !== undefined && { irpjAntecipacaoMes1: Number(irpjAntecipacaoMes1) }),
             ...(irpjAntecipacaoMes2 !== undefined && { irpjAntecipacaoMes2: Number(irpjAntecipacaoMes2) }),
             ...(csllAntecipacaoMes1 !== undefined && { csllAntecipacaoMes1: Number(csllAntecipacaoMes1) }),
@@ -108,7 +126,7 @@ async function criar(req, res, next) {
         };
         const calculo = await prisma.calculoTrimestral.create({
             data: {
-                ano: Number(ano), trimestre: Number(trimestre), descricao,
+                ano: Number(ano), trimestre: Number(trimestre), mesReferencia, descricao,
                 empresaId: empresaId || null,
                 receita16: resultado.receita16, receita8: resultado.receita8,
                 receita16p: resultado.receita16p, receita32: resultado.receita32,
@@ -127,16 +145,18 @@ async function criar(req, res, next) {
         return res.status(201).json(calculo);
     }
     catch (err) {
-        // Conflito de unicidade (ano+trimestre+empresa já existe) — retorna o id do existente
+        // Conflito de unicidade (ano+trimestre+mesReferencia+empresa já existe) — retorna o id do existente
         const msg = err instanceof Error ? err.message : '';
         if (msg.includes('Unique constraint') || msg.includes('unique constraint')) {
-            const { ano, trimestre, empresaId } = req.body;
+            const { ano, trimestre, mesReferencia: mesRefBody, empresaId } = req.body;
+            const mesReferencia = mesRefBody !== undefined ? Number(mesRefBody) : 3;
             const existente = await prisma.calculoTrimestral.findFirst({
-                where: { ano: Number(ano), trimestre: Number(trimestre), empresaId: empresaId || null },
-                select: { id: true, ano: true, trimestre: true, descricao: true, criadoEm: true },
+                where: { ano: Number(ano), trimestre: Number(trimestre), mesReferencia, empresaId: empresaId || null },
+                select: { id: true, ano: true, trimestre: true, mesReferencia: true, descricao: true, criadoEm: true },
             });
+            const tipoRegistro = mesReferencia === 1 ? 'antecipação do 1º mês' : mesReferencia === 2 ? 'antecipação do 2º mês' : 'fechamento trimestral';
             return res.status(409).json({
-                erro: 'Já existe um cálculo para esta empresa neste trimestre/ano.',
+                erro: `Já existe um registro de ${tipoRegistro} para esta empresa neste trimestre/ano.`,
                 existente,
             });
         }
@@ -149,13 +169,16 @@ async function atualizar(req, res, next) {
         const existente = await prisma.calculoTrimestral.findUnique({ where: { id } });
         if (!existente)
             return res.status(404).json({ erro: 'Cálculo não encontrado.' });
-        const { ano, trimestre, descricao, empresaId, irrf, csllRetida, irpjMesesAnteriores, csllMesesAnteriores, modalidadeRecolhimento, irpjAntecipacaoMes1, irpjAntecipacaoMes2, csllAntecipacaoMes1, csllAntecipacaoMes2, receitasMensais, ...body } = req.body;
+        const { ano, trimestre, mesReferencia: mesRefBody, descricao, empresaId, irrf, csllRetida, irpjMesesAnteriores, csllMesesAnteriores, modalidadeRecolhimento, irpjAntecipacaoMes1, irpjAntecipacaoMes2, csllAntecipacaoMes1, csllAntecipacaoMes2, receitasMensais, ...body } = req.body;
+        const mesReferencia = mesRefBody !== undefined ? Number(mesRefBody) : existente.mesReferencia ?? 3;
+        const isAntecipacao = mesReferencia === 1 || mesReferencia === 2;
         const entrada = parseEntrada({ ...body, irrf, csllRetida, irpjMesesAnteriores, csllMesesAnteriores });
-        const resultado = (0, calculo_service_1.calcularLucroPresumido)(entrada, opcoesPeriodo(ano, trimestre));
-        // Inclui modalidadeRecolhimento, antecipações e receitas mensais no detalheCalculo para rastreabilidade
+        const resultado = (0, calculo_service_1.calcularLucroPresumido)(entrada, opcoesPeriodo(ano, trimestre, isAntecipacao ? 'mensal_antecipacao' : undefined));
+        // Inclui modalidadeRecolhimento, mesReferencia, antecipações e receitas mensais no detalheCalculo
         const detalheComModalidade = {
             ...resultado,
             modalidadeRecolhimento: modalidadeRecolhimento ?? 'trimestral',
+            mesReferencia,
             ...(irpjAntecipacaoMes1 !== undefined && { irpjAntecipacaoMes1: Number(irpjAntecipacaoMes1) }),
             ...(irpjAntecipacaoMes2 !== undefined && { irpjAntecipacaoMes2: Number(irpjAntecipacaoMes2) }),
             ...(csllAntecipacaoMes1 !== undefined && { csllAntecipacaoMes1: Number(csllAntecipacaoMes1) }),
@@ -165,7 +188,7 @@ async function atualizar(req, res, next) {
         const calculo = await prisma.calculoTrimestral.update({
             where: { id },
             data: {
-                ano: Number(ano), trimestre: Number(trimestre), descricao,
+                ano: Number(ano), trimestre: Number(trimestre), mesReferencia, descricao,
                 empresaId: empresaId || null,
                 receita16: resultado.receita16, receita8: resultado.receita8,
                 receita16p: resultado.receita16p, receita32: resultado.receita32,
@@ -205,7 +228,7 @@ async function duplicar(req, res) {
     let novoAno = original.trimestre < 4 ? original.ano : original.ano + 1;
     for (let t = 0; t < 8; t++) {
         const existe = await prisma.calculoTrimestral.findFirst({
-            where: { ano: novoAno, trimestre: novoTrimestre, empresaId: original.empresaId },
+            where: { ano: novoAno, trimestre: novoTrimestre, mesReferencia: 3, empresaId: original.empresaId },
         });
         if (!existe)
             break;

@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.login = login;
 exports.perfil = perfil;
+exports.registrar = registrar;
 exports.alterarSenha = alterarSenha;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -35,6 +36,27 @@ async function perfil(req, res) {
         select: { id: true, nome: true, email: true, perfil: true, criadoEm: true },
     });
     return res.json(usuario);
+}
+async function registrar(req, res) {
+    const { nome, email, senha } = req.body;
+    if (!nome || !email || !senha) {
+        return res.status(400).json({ erro: 'Nome, e-mail e senha são obrigatórios.' });
+    }
+    if (senha.length < 6) {
+        return res.status(400).json({ erro: 'A senha deve ter pelo menos 6 caracteres.' });
+    }
+    const existe = await prisma.usuario.findUnique({ where: { email } });
+    if (existe)
+        return res.status(409).json({ erro: 'E-mail já cadastrado.' });
+    const senhaHash = await bcryptjs_1.default.hash(senha, 10);
+    const usuario = await prisma.usuario.create({
+        data: { nome, email, senhaHash, perfil: 'USUARIO' },
+    });
+    const token = jsonwebtoken_1.default.sign({ id: usuario.id, email: usuario.email, perfil: usuario.perfil }, process.env.JWT_SECRET, { expiresIn: '8h' });
+    return res.status(201).json({
+        token,
+        usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, perfil: usuario.perfil },
+    });
 }
 async function alterarSenha(req, res) {
     const { senhaAtual, novaSenha } = req.body;
